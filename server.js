@@ -7,6 +7,7 @@ const META_WABA_ID = "767216649494332";
 const GRAPH_VERSION = "v25.0";
 const PUBLIC_BASE_URL = "https://perfect-printings-whatsapp-agent.onrender.com";
 const ADMIN_PHONE_NUMBER = "918966066612";
+const PAYMENT_UPI_ID = "shubhamkushwah8966-1@oksbi";
 const AI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const conversations = new Map();
 const customerStates = new Map();
@@ -181,7 +182,7 @@ async function handleAdminOrderUpdate(message) {
   const payable = balance + courier;
   if (message.video?.id) await sendVideoById(customerPhone, message.video.id, `Order ${reference} ki printing ready hai 😊`);
   await sendTextMessage(customerPhone, `Ji, aapka order ${reference} ready ho gaya hai 😊 Remaining amount ₹${balance} aur courier charge ₹${courier} hai. Total ₹${payable} pay karke screenshot share kar dijiye.`);
-  await sendImage(customerPhone, "payment-qr.jpeg", `Order ${reference} final payment QR — ₹${payable}. Payment ke baad screenshot share kar dijiye.`);
+  await sendImage(customerPhone, "payment-qr.jpeg", `Order ${reference} final payment QR — ₹${payable}. UPI: ${PAYMENT_UPI_ID}. Payment ke baad screenshot share kar dijiye.`);
   order.status = "final-payment-requested";
   order.finalPayable = payable;
   await sendTextMessage(ADMIN_PHONE_NUMBER, `Final payment request sent to customer for ${reference}: Balance ₹${balance} + Courier ₹${courier} = ₹${payable}.`);
@@ -234,7 +235,7 @@ async function replyToCustomer(to, text) {
     const order = ensureOrderReference(to, history);
     history.push(`System: Customer confirmed order. Order reference ${order.id}.`);
     // A customer may ask for the QR again, so never suppress this payment image.
-    await sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. Payment ke baad screenshot share kar dijiye.`);
+    await sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. UPI: ${PAYMENT_UPI_ID}. Payment ke baad screenshot share kar dijiye.`);
     sendTextMessage(ADMIN_PHONE_NUMBER, `NEW ORDER REQUEST\nOrder: ${order.id}\nCustomer WhatsApp: +${to}\nDetails:\n${order.details}\n\nCustomer has confirmed. Please verify 50% advance after payment screenshot.`).catch(console.error);
     paymentQrSent = true;
   }
@@ -246,7 +247,7 @@ async function replyToCustomer(to, text) {
   let reply;
   if (paymentQrSent) {
     const order = ensureOrderReference(to, history);
-    reply = `Ji bilkul 😊 QR bhej diya hai. Order ${order.id} ke 50% advance ka payment karke screenshot isi chat mein share kar dijiye.`;
+    reply = `Ji bilkul 😊 QR bhej diya hai. UPI ID: ${PAYMENT_UPI_ID}. Order ${order.id} ke 50% advance ka payment karke screenshot isi chat mein share kar dijiye.`;
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
