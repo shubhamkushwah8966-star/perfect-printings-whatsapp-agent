@@ -21,6 +21,34 @@ const instructions = `You are the respectful WhatsApp sales assistant for Perfec
 
 function send(res, status, body) { res.writeHead(status, { "Content-Type": "text/plain" }); res.end(body); }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
+}
+
+function monitorPage() {
+  const chats = [...conversations.entries()].map(([phone, history]) => {
+    const order = orderRecords.get(phone);
+    const messages = history.slice(-80).map(line => {
+      const [speaker, ...content] = line.split(": ");
+      return `<p class="${speaker.toLowerCase()}"><b>${escapeHtml(speaker)}:</b> ${escapeHtml(content.join(": "))}</p>`;
+    }).join("");
+    return `<section><h2>Customer +${escapeHtml(phone)} ${order ? `• ${escapeHtml(order.id)}` : ""}</h2>${messages || "<p>No messages yet.</p>"}</section>`;
+  }).join("") || "<p>No customer chats recorded since the latest deployment.</p>";
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><title>Perfect Printings Monitor</title><style>body{font:15px Arial;background:#f5f6f8;color:#18212b;margin:0;padding:24px}h1{margin-top:0}section{background:#fff;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 5px #0001}h2{font-size:16px;margin:0 0 12px}.customer{background:#e7f8e8;margin-left:15%;padding:8px;border-radius:8px}.assistant{background:#f1f3f5;margin-right:15%;padding:8px;border-radius:8px}.system{font-size:12px;color:#666}</style></head><body><h1>Perfect Printings — Agent Monitor</h1><p>Live refresh: 15 seconds. Latest customer conversations are shown below.</p>${chats}</body></html>`;
+}
+
+function authorizeMonitor(req, res) {
+  const password = process.env.MONITOR_PASSWORD;
+  const token = req.headers.authorization?.replace(/^Basic\s+/i, "") || "";
+  const supplied = token ? Buffer.from(token, "base64").toString().split(":").slice(1).join(":") : "";
+  if (!password || supplied !== password) {
+    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="Perfect Printings Monitor"', "Content-Type": "text/plain" });
+    res.end("Private monitor login required");
+    return false;
+  }
+  return true;
+}
+
 function extractResponseText(result) {
   if (typeof result.output_text === "string" && result.output_text.trim()) return result.output_text.trim();
   const text = (result.output || []).flatMap(item => item.content || []).map(part => {
@@ -297,6 +325,11 @@ function queueCustomerReply(to, text) {
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname === "/") return send(res, 200, "Perfect Printings WhatsApp agent is running.");
+  if (req.method === "GET" && url.pathname === "/monitor") {
+    if (!authorizeMonitor(req, res)) return;
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    return res.end(monitorPage());
+  }
   const assetName = path.basename(url.pathname);
   const availableAssets = new Set(["corporate-gifts.jpg", "paper-gumming-stickers.jpeg", "vinyl-transparent-stickers.jpeg", "payment-qr.jpeg", "sticker-sheet-count-12x18.jpeg", "sticker-sheet-count-13x19.jpeg", "metal-pens-catalogue.pdf", "notebook-catalogue.pdf", "corporate-gift-sets-catalogue.pdf", "miscellaneous-items-catalogue.pdf", "metal-keychains-catalogue.pdf", "visiting-card-rate-list.pdf"]);
   if (req.method === "GET" && url.pathname.startsWith("/assets/") && availableAssets.has(assetName)) {
