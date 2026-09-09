@@ -86,7 +86,7 @@ function updateCustomerState(phone, text) {
 
 function formatCustomerState(state) {
   const details = Object.entries(state).map(([key, value]) => `${key}: ${value}`);
-  return details.length ? `SAVED CUSTOMER RECORD: ${details.join("; ")}. These details are already known; never ask them again.` : "No saved customer record yet.";
+  return details.length ? `SAVED CUSTOMER RECORD: ${details.join("; ")}. These facts are FINAL for this order. Never ask any of them again. Example: if lamination says "without lamination", do not ask lamination again; same for quantity, size, GSM, sides, material, design and address.` : "No saved customer record yet.";
 }
 
 async function ensureWhatsAppSubscription() {
