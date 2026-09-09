@@ -126,10 +126,26 @@ async function sendTextMessage(to, body) {
 
 async function alertAdmin(body) {
   try {
-    await sendTextMessage(ADMIN_PHONE_NUMBER, body);
-    console.log("Admin alert sent");
+    const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${META_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to: ADMIN_PHONE_NUMBER,
+        type: "template",
+        template: { name: "admin_rate_alert", language: { code: "en" } }
+      })
+    });
+    if (!response.ok) throw new Error(await response.text());
+    console.log("Admin template alert sent");
   } catch (error) {
-    console.error("Admin alert failed:", error);
+    console.error("Admin template alert failed:", error);
+    try {
+      await sendTextMessage(ADMIN_PHONE_NUMBER, body);
+      console.log("Admin text alert sent");
+    } catch (fallbackError) {
+      console.error("Admin text alert failed:", fallbackError);
+    }
   }
 }
 
