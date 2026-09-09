@@ -243,8 +243,8 @@ async function replyToCustomer(to, text) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else if (needsAdminRate) {
     const details = history.filter(item => item.startsWith("Customer:")).slice(-8).join("\n");
-    sendTextMessage(ADMIN_PHONE_NUMBER, `RATE CONFIRMATION NEEDED\nCustomer WhatsApp: +${to}\nProduct: ${isVisitingCardConversation ? "Visiting cards" : "Needs confirmation"}\nCustomer requirement:\n${details}\n\nPlease reply with the exact rate.`).catch(console.error);
-    reply = "Ji bilkul, aapki requirement ke hisaab se exact rate Shubham ji se confirm kar raha hoon. Confirm hote hi isi chat mein bata deta hoon 😊";
+    sendTextMessage(ADMIN_PHONE_NUMBER, `CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nProduct: ${isVisitingCardConversation ? "Visiting cards" : "Rate not available in agent"}\nCustomer requirement:\n${details}\n\nPlease customer se baat kar lijiye aur exact rate confirm kar dijiye.`).catch(console.error);
+    reply = "Ji, is requirement ka exact rate confirm kar raha hoon. 2 minute dijiye, Shubham ji aapse baat kar lenge 😊";
   } else {
     const workingMemory = `${formatCustomerState(customerState)}\n${buildWorkingMemory(history)}`;
     const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: `SYSTEM CUSTOMER MEMORY (this is important and must not be contradicted):\n${workingMemory}\n\nFULL RECENT CONVERSATION:\n${history.slice(-120).join("\n")}` }) });
