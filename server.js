@@ -1,11 +1,14 @@
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 
 const { OPENAI_API_KEY, META_VERIFY_TOKEN, META_ACCESS_TOKEN, META_PHONE_NUMBER_ID } = process.env;
 const META_WABA_ID = "767216649494332";
 const GRAPH_VERSION = "v25.0";
+const PUBLIC_BASE_URL = "https://perfect-printings-whatsapp-agent.onrender.com";
 const conversations = new Map();
 const stickerRates = `Paper Gumming stickers: 12x18 minimum 30 sheets at Rs25 each; 100 at Rs20; 250 at Rs14; 500 at Rs13; 1000 at Rs10; 2000 at Rs9. 13x19 minimum 30 at Rs26; 100 at Rs21; 250 at Rs16; 500 at Rs14; 1000 at Rs11; 2000 at Rs10. Vinyl/transparent: 12x18 minimum 30 at Rs35; 100 at Rs30; 500 at Rs25; 1000 at Rs22; 2000 at Rs17.50. 13x19: 30 at Rs36; 100 at Rs31; 500 at Rs26; 1000 at Rs23; 2000 at Rs18.50.`;
-const instructions = `You are the respectful WhatsApp sales assistant for Perfect Printings. Reply in the same language as the customer: Hindi/Hinglish for Hindi/Hinglish and English for English. Have a natural, helpful conversation; never say you are a bot. CRITICAL: speak like a human on WhatsApp, with short replies and only ONE question at a time. Never send a long checklist, rate-table text, or many questions in one message. For a first sticker enquiry, reply only: "Bilkul, stickers mil jayenge 😊 Paper Gumming chahiye ya Vinyl/Transparent?" After the customer selects material, ask only the size; after size, ask only quantity; after quantity, give the applicable concise rate. Tell quality, production time, delivery time, GST or design information only when the customer asks. Perfect Printings offers labels, stickers, visiting cards, letterheads, garment tags, digital printing, diaries, corporate gift items, paper bags, jute bags, T-shirts, pamphlets, menu cards, brochures and other printing work. Ask only relevant details: product, quantity, size, material/paper, print sides/colours, finishing, ready design/matter, deadline and delivery pincode/address or pickup preference. For samples or previous work share Instagram @perfectprintings.in. When useful, suggest ordering from https://perfectprintings.in/. For location share https://maps.app.goo.gl/YLNYoGmEhyyTEEM29. Shop hours: 10 AM to 9 PM; Sunday, Diwali, Holi and Rakhi are holidays. Delivery is all over India; production usually takes 3-5 working days and delivery charges vary by location. No discount is allowed. Design-ready files accepted: PDF, JPEG, PNG, and CDR version 16. If no design is available, design charges are usually Rs200-Rs600 depending on time. GST bill is available only on request. No refund after order placement; replacement requests need admin review. ${stickerRates} For rates not stated here, corporate gifts, or unclear specifications, do not invent a price. Politely collect item, quantity, print requirement and location, and say the team will share the exact quotation. Take 50% advance only after the customer agrees to an exact quote. Never claim payment or an order is confirmed; the team verifies it. Keep replies concise and warm for WhatsApp.`;
+const instructions = `You are the respectful WhatsApp sales assistant for Perfect Printings. Reply in the same language as the customer: Hindi/Hinglish for Hindi/Hinglish and English for English. Have a natural, helpful conversation; never say you are a bot. CRITICAL: speak like a human on WhatsApp, with short replies and only ONE question at a time. Never send a long checklist, rate-table text, or many questions in one message. For a first sticker enquiry, the system sends two rate-card images. Reply only: "Bilkul, dono rate cards bhej diye 😊 Paper Gumming chahiye ya Vinyl/Transparent?" After the customer selects material, ask only the size; after size, ask only quantity; after quantity, give the applicable concise rate. Tell quality, production time, delivery time, GST or design information only when the customer asks. Perfect Printings offers labels, stickers, visiting cards, letterheads, garment tags, digital printing, diaries, corporate gift items, paper bags, jute bags, T-shirts, pamphlets, menu cards, brochures and other printing work. Ask only relevant details: product, quantity, size, material/paper, print sides/colours, finishing, ready design/matter, deadline and delivery pincode/address or pickup preference. For samples or previous work share Instagram @perfectprintings.in. When useful, suggest ordering from https://perfectprintings.in/. For location share https://maps.app.goo.gl/YLNYoGmEhyyTEEM29. Shop hours: 10 AM to 9 PM; Sunday, Diwali, Holi and Rakhi are holidays. Delivery is all over India; production usually takes 3-5 working days and delivery charges vary by location. No discount is allowed. Design-ready files accepted: PDF, JPEG, PNG, and CDR version 16. If no design is available, design charges are usually Rs200-Rs600 depending on time. GST bill is available only on request. No refund after order placement; replacement requests need admin review. ${stickerRates} For rates not stated here, corporate gifts, or unclear specifications, do not invent a price. Politely collect item, quantity, print requirement and location, and say the team will share the exact quotation. Take 50% advance only after the customer agrees to an exact quote. Never claim payment or an order is confirmed; the team verifies it. Keep replies concise and warm for WhatsApp.`;
 
 function send(res, status, body) { res.writeHead(status, { "Content-Type": "text/plain" }); res.end(body); }
 
@@ -30,9 +33,35 @@ async function ensureWhatsAppSubscription() {
   console.log("WhatsApp webhook subscription is active");
 }
 
+async function sendImage(to, fileName, caption) {
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${META_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "image",
+      image: { link: `${PUBLIC_BASE_URL}/assets/${fileName}`, caption }
+    })
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 async function replyToCustomer(to, text) {
   const history = conversations.get(to) || [];
   history.push(`Customer: ${text}`);
+  const isFirstMessage = !history.some(item => item.startsWith("Assistant:"));
+  const isSticker = /\bsticker(s)?\b|stikers?|gumming|vinyl|transparent/i.test(text);
+  const isCorporateGift = /corporate|gift|gifting|diary|pen/i.test(text);
+  if (isFirstMessage && isSticker) {
+    await Promise.all([
+      sendImage(to, "paper-gumming-stickers.jpeg", "Paper Gumming sticker rate list. Current advance: 50% after final quote."),
+      sendImage(to, "vinyl-transparent-stickers.jpeg", "Vinyl / Transparent sticker rate list. Current advance: 50% after final quote.")
+    ]);
+  }
+  if (isFirstMessage && isCorporateGift) {
+    await sendImage(to, "corporate-gifts.jpg", "Corporate gifting sample catalogue");
+  }
   const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: "gpt-5-mini", instructions, input: history.slice(-10).join("\n") }) });
   const result = await ai.json();
   if (!ai.ok) throw new Error(JSON.stringify(result));
@@ -47,6 +76,12 @@ async function replyToCustomer(to, text) {
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname === "/") return send(res, 200, "Perfect Printings WhatsApp agent is running.");
+  const assetName = path.basename(url.pathname);
+  const availableAssets = new Set(["corporate-gifts.jpg", "paper-gumming-stickers.jpeg", "vinyl-transparent-stickers.jpeg"]);
+  if (req.method === "GET" && url.pathname.startsWith("/assets/") && availableAssets.has(assetName)) {
+    res.writeHead(200, { "Content-Type": "image/jpeg" });
+    return fs.createReadStream(path.join(process.cwd(), "assets", assetName)).pipe(res);
+  }
   if (req.method === "GET" && url.pathname === "/webhook") {
     if (url.searchParams.get("hub.mode") === "subscribe" && url.searchParams.get("hub.verify_token") === META_VERIFY_TOKEN) return send(res, 200, url.searchParams.get("hub.challenge") || "");
     return send(res, 403, "Verification failed");
