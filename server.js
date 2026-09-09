@@ -169,11 +169,14 @@ async function replyToCustomer(to, text) {
   if (/visiting ?card|business ?card/.test(lowerText) && /rate list|pdf bhej|price list/i.test(text)) await sendAssetOnce(to, "visiting-cards", () => sendDocument(to, "visiting-card-rate-list.pdf", "Visiting card rate list"));
   const hasQuotedPrice = /rs\.?\s*\d|₹\s*\d|total/i.test(historyText);
   const confirmsOrder = /\b(confirm|confirmed|done|final|book|kar do|kr do|ok)\b/i.test(lowerText);
-  if (hasQuotedPrice && confirmsOrder) {
+  const asksForPaymentQr = /\b(qr|upi|payment)\b.*\b(send|bhej|bhjo|share|do)\b|\b(send|bhej|bhjo|share|do)\b.*\b(qr|upi|payment)\b/i.test(lowerText);
+  let paymentQrSent = false;
+  if (hasQuotedPrice && (confirmsOrder || asksForPaymentQr)) {
     const order = ensureOrderReference(to, history);
     history.push(`System: Customer confirmed order. Order reference ${order.id}.`);
     await sendAssetOnce(to, "payment-qr", () => sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. Payment ke baad screenshot share kar dijiye.`));
     sendTextMessage(ADMIN_PHONE_NUMBER, `NEW ORDER REQUEST\nOrder: ${order.id}\nCustomer WhatsApp: +${to}\nDetails:\n${order.details}\n\nCustomer has confirmed. Please verify 50% advance after payment screenshot.`).catch(console.error);
+    paymentQrSent = true;
   }
   if (isOrderStatusRequest && to !== ADMIN_PHONE_NUMBER) {
     const recentCustomerDetails = history.filter(item => item.startsWith("Customer:")).slice(-4).join("\n");
@@ -181,7 +184,10 @@ async function replyToCustomer(to, text) {
   }
   const isGreetingOnly = /^(hi+|hello+|hey+|namaste|namaskar)\s*[!.?😊🙏]*$/i.test(text.trim());
   let reply;
-  if (isFirstMessage && isGreetingOnly) {
+  if (paymentQrSent) {
+    const order = ensureOrderReference(to, history);
+    reply = `Ji bilkul 😊 QR bhej diya hai. Order ${order.id} ke 50% advance ka payment karke screenshot isi chat mein share kar dijiye.`;
+  } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
     const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: history.slice(-40).join("\n") }) });
