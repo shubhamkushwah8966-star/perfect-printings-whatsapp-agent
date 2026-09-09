@@ -43,6 +43,23 @@ function findOrderByReference(reference) {
   return [...orderRecords.entries()].find(([, order]) => order.id === reference);
 }
 
+function buildWorkingMemory(history) {
+  const transcript = history.join("\n");
+  const lower = transcript.toLowerCase();
+  const facts = [];
+  if (/visiting ?card|business ?card/.test(lower)) facts.push("Product discussed: visiting cards.");
+  if (/sticker|gumming|vinyl|transparent/.test(lower)) facts.push("Product discussed: stickers.");
+  if (/paper gumming|paper gum/.test(lower)) facts.push("Sticker material confirmed/discussed: Paper Gumming.");
+  if (/vinyl|transparent/.test(lower)) facts.push("Sticker material confirmed/discussed: Vinyl/Transparent.");
+  if (/\[customer uploaded an (image|pdf\/document|video)/i.test(transcript) || /design (received|mil gaya|bhej)/i.test(lower)) facts.push("Customer has already shared a design/file. Do not ask for the design again.");
+  const orderReference = transcript.match(/PP-\d{8}-\d{3}/i)?.[0];
+  if (orderReference) facts.push(`Order reference: ${orderReference}.`);
+  if (/customer confirmed order|50% advance|payment qr|qr bhej diya/i.test(lower)) facts.push("Order/payment stage has started. Preserve the quoted product, amount and order context; do not restart the enquiry.");
+  const quotedLines = history.filter(item => /(?:₹|rs\.?\s*\d|total\s*[:=]?\s*\d)/i.test(item)).slice(-6);
+  if (quotedLines.length) facts.push(`Recent quoted-price context (treat as important): ${quotedLines.join(" | ")}`);
+  return facts.length ? facts.join("\n") : "No important facts captured yet; use the conversation transcript.";
+}
+
 async function ensureWhatsAppSubscription() {
   const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_WABA_ID}/subscribed_apps`, {
     method: "POST",
@@ -191,13 +208,15 @@ async function replyToCustomer(to, text) {
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
-    const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: history.slice(-40).join("\n") }) });
+    const workingMemory = buildWorkingMemory(history);
+    const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: `SYSTEM CUSTOMER MEMORY (this is important and must not be contradicted):\n${workingMemory}\n\nFULL RECENT CONVERSATION:\n${history.slice(-120).join("\n")}` }) });
     const result = await ai.json();
     if (!ai.ok) throw new Error(JSON.stringify(result));
     reply = extractResponseText(result) || "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   }
   history.push(`Assistant: ${reply}`);
-  conversations.set(to, history.slice(-40));
+  // Keep enough history for long customer conversations instead of dropping key order facts.
+  conversations.set(to, history.slice(-160));
   await sendTextMessage(to, reply);
 }
 
