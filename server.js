@@ -100,9 +100,10 @@ async function sendVideoById(to, mediaId, caption) {
 }
 
 function moneyFromAdminMessage(text, label) {
-  const pattern = new RegExp(`${label}\\s*(?:amount)?\\s*[:=\\-]?\\s*(?:rs\\.?|₹)?\\s*(\\d+(?:\\.\\d{1,2})?)`, "i");
+  const pattern = new RegExp(`(?:${label})\\s*(?:amount)?\\s*[:=\\-]?\\s*(?:rs\\.?|₹)?\\s*(\\d+(?:\\.\\d{1,2})?)`, "i");
   const match = text.match(pattern);
-  return match ? Number(match[1]) : null;
+  const amount = match ? Number(match[1]) : NaN;
+  return Number.isFinite(amount) ? amount : null;
 }
 
 async function handleAdminOrderUpdate(message) {
