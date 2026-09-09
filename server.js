@@ -171,7 +171,7 @@ async function replyToCustomer(to, text) {
   const confirmsOrder = /\b(confirm|confirmed|done|final|book|kar do|kr do|ok)\b/i.test(lowerText);
   const asksForPaymentQr = /\b(qr|upi|payment)\b.*\b(send|bhej|bhjo|share|do)\b|\b(send|bhej|bhjo|share|do)\b.*\b(qr|upi|payment)\b/i.test(lowerText);
   let paymentQrSent = false;
-  if (hasQuotedPrice && (confirmsOrder || asksForPaymentQr)) {
+  if (asksForPaymentQr || (hasQuotedPrice && confirmsOrder)) {
     const order = ensureOrderReference(to, history);
     history.push(`System: Customer confirmed order. Order reference ${order.id}.`);
     await sendAssetOnce(to, "payment-qr", () => sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. Payment ke baad screenshot share kar dijiye.`));
