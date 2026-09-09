@@ -202,7 +202,9 @@ async function replyToCustomer(to, text) {
   const isVisitingCardConversation = /visiting ?card|business ?card/i.test(historyText);
   // Only sticker rates are directly stored in the agent. All other products need the
   // owner's live quote instead of an invented price.
-  const needsAdminRate = isRateRequest && !isStickerConversation;
+  // A new product in an old sticker conversation must still go to the owner.
+  const explicitlyUnknownProduct = /menu ?card|tent ?card|ten ?card|letterhead|garment ?tag|paper ?bag|jute ?bag|t-?shirt|pamphlet|brochure|broucher|label/i.test(text);
+  const needsAdminRate = isRateRequest && (explicitlyUnknownProduct || !isStickerConversation);
   if (isStickerConversation && isRateRequest && /paper gumming|paper gum|gumming/.test(historyText)) await sendAssetOnce(to, "paper-sticker-rate", () => sendImage(to, "paper-gumming-stickers.jpeg", "Paper Gumming sticker rate list. Current advance: 50% after final quote."));
   if (isStickerConversation && isRateRequest && /vinyl|transparent/.test(historyText)) await sendAssetOnce(to, "vinyl-sticker-rate", () => sendImage(to, "vinyl-transparent-stickers.jpeg", "Vinyl / Transparent sticker rate list. Current advance: 50% after final quote."));
   if (isFirstMessage && isCorporateGift) {
