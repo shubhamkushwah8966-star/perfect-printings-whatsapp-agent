@@ -123,6 +123,15 @@ async function sendTextMessage(to, body) {
   if (!response.ok) throw new Error(JSON.stringify(result));
 }
 
+async function alertAdmin(body) {
+  try {
+    await sendTextMessage(ADMIN_PHONE_NUMBER, body);
+    console.log("Admin alert sent");
+  } catch (error) {
+    console.error("Admin alert failed:", error);
+  }
+}
+
 async function sendDocument(to, fileName, caption) {
   const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
     method: "POST",
@@ -204,7 +213,7 @@ async function replyToCustomer(to, text) {
   // owner's live quote instead of an invented price.
   // A new product in an old sticker conversation must still go to the owner.
   const explicitlyUnknownProduct = /menu ?card|tent ?card|ten ?card|letterhead|garment ?tag|paper ?bag|jute ?bag|t-?shirt|pamphlet|brochure|broucher|label/i.test(text);
-  const needsAdminRate = isRateRequest && (explicitlyUnknownProduct || !isStickerConversation);
+  const needsAdminRate = explicitlyUnknownProduct || (isRateRequest && !isStickerConversation);
   if (isStickerConversation && isRateRequest && /paper gumming|paper gum|gumming/.test(historyText)) await sendAssetOnce(to, "paper-sticker-rate", () => sendImage(to, "paper-gumming-stickers.jpeg", "Paper Gumming sticker rate list. Current advance: 50% after final quote."));
   if (isStickerConversation && isRateRequest && /vinyl|transparent/.test(historyText)) await sendAssetOnce(to, "vinyl-sticker-rate", () => sendImage(to, "vinyl-transparent-stickers.jpeg", "Vinyl / Transparent sticker rate list. Current advance: 50% after final quote."));
   if (isFirstMessage && isCorporateGift) {
@@ -245,7 +254,7 @@ async function replyToCustomer(to, text) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else if (needsAdminRate) {
     const details = history.filter(item => item.startsWith("Customer:")).slice(-8).join("\n");
-    sendTextMessage(ADMIN_PHONE_NUMBER, `CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nProduct: ${isVisitingCardConversation ? "Visiting cards" : "Rate not available in agent"}\nCustomer requirement:\n${details}\n\nPlease customer se baat kar lijiye aur exact rate confirm kar dijiye.`).catch(console.error);
+    alertAdmin(`CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nProduct: ${isVisitingCardConversation ? "Visiting cards" : "Rate not available in agent"}\nCustomer requirement:\n${details}\n\nPlease customer se baat kar lijiye aur exact rate confirm kar dijiye.`);
     reply = "Ji, is requirement ka exact rate confirm kar raha hoon. 2 minute dijiye, Shubham ji aapse baat kar lenge 😊";
   } else {
     const workingMemory = `${formatCustomerState(customerState)}\n${buildWorkingMemory(history)}`;
