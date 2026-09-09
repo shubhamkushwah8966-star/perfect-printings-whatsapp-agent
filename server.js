@@ -199,6 +199,10 @@ async function replyToCustomer(to, text) {
   const historyText = history.join(" ").toLowerCase();
   const isRateRequest = /\b(price|rate|rate list|cost|kitna|bhav)\b/i.test(text);
   const isStickerConversation = isSticker || /\bsticker(s)?\b|stikers?/i.test(historyText);
+  const isVisitingCardConversation = /visiting ?card|business ?card/i.test(historyText);
+  // Only sticker rates are directly stored in the agent. All other products need the
+  // owner's live quote instead of an invented price.
+  const needsAdminRate = isRateRequest && !isStickerConversation;
   if (isStickerConversation && isRateRequest && /paper gumming|paper gum|gumming/.test(historyText)) await sendAssetOnce(to, "paper-sticker-rate", () => sendImage(to, "paper-gumming-stickers.jpeg", "Paper Gumming sticker rate list. Current advance: 50% after final quote."));
   if (isStickerConversation && isRateRequest && /vinyl|transparent/.test(historyText)) await sendAssetOnce(to, "vinyl-sticker-rate", () => sendImage(to, "vinyl-transparent-stickers.jpeg", "Vinyl / Transparent sticker rate list. Current advance: 50% after final quote."));
   if (isFirstMessage && isCorporateGift) {
@@ -237,6 +241,10 @@ async function replyToCustomer(to, text) {
     reply = `Ji bilkul 😊 QR bhej diya hai. Order ${order.id} ke 50% advance ka payment karke screenshot isi chat mein share kar dijiye.`;
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
+  } else if (needsAdminRate) {
+    const details = history.filter(item => item.startsWith("Customer:")).slice(-8).join("\n");
+    sendTextMessage(ADMIN_PHONE_NUMBER, `RATE CONFIRMATION NEEDED\nCustomer WhatsApp: +${to}\nProduct: ${isVisitingCardConversation ? "Visiting cards" : "Needs confirmation"}\nCustomer requirement:\n${details}\n\nPlease reply with the exact rate.`).catch(console.error);
+    reply = "Ji bilkul, aapki requirement ke hisaab se exact rate Shubham ji se confirm kar raha hoon. Confirm hote hi isi chat mein bata deta hoon 😊";
   } else {
     const workingMemory = `${formatCustomerState(customerState)}\n${buildWorkingMemory(history)}`;
     const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: `SYSTEM CUSTOMER MEMORY (this is important and must not be contradicted):\n${workingMemory}\n\nFULL RECENT CONVERSATION:\n${history.slice(-120).join("\n")}` }) });
