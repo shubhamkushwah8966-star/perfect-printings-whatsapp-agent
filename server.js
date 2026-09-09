@@ -297,7 +297,13 @@ http.createServer((req, res) => {
   req.on("end", () => {
     send(res, 200, "OK");
     try {
-      const message = JSON.parse(data)?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+      const value = JSON.parse(data)?.entry?.[0]?.changes?.[0]?.value || {};
+      const status = value.statuses?.[0];
+      if (status) {
+        console.log(`WhatsApp delivery status: ${status.status} | recipient: ${status.recipient_id || "unknown"} | error: ${JSON.stringify(status.errors || [])}`);
+        return;
+      }
+      const message = value.messages?.[0];
       if (message?.from === ADMIN_PHONE_NUMBER) {
         handleAdminOrderUpdate(message).catch(console.error);
         return;
