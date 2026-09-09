@@ -1,6 +1,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 
 const { OPENAI_API_KEY, META_VERIFY_TOKEN, META_ACCESS_TOKEN, META_PHONE_NUMBER_ID } = process.env;
 const META_WABA_ID = "767216649494332";
@@ -14,6 +15,7 @@ const customerStates = new Map();
 const sentAssets = new Map();
 const customerQueues = new Map();
 const orderRecords = new Map();
+const monitorSessions = new Set();
 const stickerRates = `Paper Gumming stickers: 12x18 minimum 30 sheets at Rs25 each; 100 at Rs20; 250 at Rs14; 500 at Rs13; 1000 at Rs10; 2000 at Rs9. 13x19 minimum 30 at Rs26; 100 at Rs21; 250 at Rs16; 500 at Rs14; 1000 at Rs11; 2000 at Rs10. Vinyl/transparent: 12x18 minimum 30 at Rs35; 100 at Rs30; 500 at Rs25; 1000 at Rs22; 2000 at Rs17.50. 13x19: 30 at Rs36; 100 at Rs31; 500 at Rs26; 1000 at Rs23; 2000 at Rs18.50.`;
 const stickerSheetCalculations = `Sticker pieces per sheet, MOQ 30 sheets: 12x18 sheet: 1x1=187, 1.5x1.5=77, 1.75x1.75=54, 2x2=40, 2.5x2.5=24, 2.75x2.75=24, 3x3=15, 3.5x3.5=12, 3.75x3.75=8, 4x4=8, 4.5x4.5=6, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=2, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2. 13x19 sheet: 1x1=216, 1.5x1.5=96, 1.75x1.75=70, 2x2=54, 2.5x2.5=28, 2.75x2.75=24, 3x3=24, 3.5x3.5=15, 3.75x3.75=12, 4x4=12, 4.5x4.5=8, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=6, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2.`;
 const workflowRules = `Accuracy rules: answer only what the customer asks, then ask only the next missing detail. Write like a polite human on WhatsApp: short, warm, simple and natural. Prefer phrases such as "Ji bilkul", "Ek minute", "Main confirm karke batata hoon", or "Aap quantity bata dijiye" where they fit. Never sound like a form, never use robotic wording, and never repeat a greeting in the same conversation. Never repeat an answered question, use a long checklist, repeatedly greet, argue, or invent information. Keep every product isolated: Paper Gumming sticker data is only for Paper Gumming, Vinyl/Transparent data is only for Vinyl/Transparent, visiting-card data is only for visiting cards, and corporate-gift data is only for corporate gifts. Never mix product rates, sizes, GSM, MOQ, sheet calculation, printing rules or finishing. Use only approved product data supplied in the prompt or relevant rate card. ${stickerSheetCalculations} If a custom size, special requirement, unusual specification, unclear product, missing rate, missing GSM, missing MOQ, unknown turnaround, payment verification, complaint, or human request needs confirmation, do not guess. Say naturally: "2 minute dijiye, size/details confirm karke batata hoon." Then collect only the useful details: customer name if known, product, material, exact size, quantity, GSM where relevant, single/double side where relevant, design/file, special requirement and delivery pincode/address. For visiting cards: standard size is 90x55 mm; MOQ is 100 cards; printing is full colour. Do not ask colour/B&W. Ask only any missing quantity, single/double side, approved GSM, and design/content. If a customer has no ready design, say design is available and, only if asked, it is approximately Rs400-Rs600 per hour depending on the requirement; never add it to printing charges without confirmation. Do not promise a poor-quality file will print perfectly; request a clearer file where needed. For an existing customer's order-status, printing-status, dispatch or delivery question, never greet again and never guess a status. Reply briefly that status is being confirmed, such as "Ji, aapke order ka status confirm karke batata hoon." Admin-confirmed information is final. Never show internal/admin process to the customer. A general enquiry is not an order: verify applicable product, size, material/GSM, quantity, sides, rate, total, design/file and customer/delivery details before moving it ahead. When the system sends a product catalogue, say only that the catalogue is sent and ask which model/item and quantity the customer needs; do not invent a catalogue rate.`;
@@ -37,13 +39,16 @@ function monitorPage() {
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="15"><title>Perfect Printings Monitor</title><style>body{font:15px Arial;background:#f5f6f8;color:#18212b;margin:0;padding:24px}h1{margin-top:0}section{background:#fff;border-radius:12px;padding:16px;margin:16px 0;box-shadow:0 1px 5px #0001}h2{font-size:16px;margin:0 0 12px}.customer{background:#e7f8e8;margin-left:15%;padding:8px;border-radius:8px}.assistant{background:#f1f3f5;margin-right:15%;padding:8px;border-radius:8px}.system{font-size:12px;color:#666}</style></head><body><h1>Perfect Printings — Agent Monitor</h1><p>Live refresh: 15 seconds. Latest customer conversations are shown below.</p>${chats}</body></html>`;
 }
 
+function monitorLoginPage() {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Perfect Printings Monitor</title><style>body{font:16px Arial;background:#f5f6f8;display:grid;place-items:center;min-height:90vh}.box{background:#fff;padding:28px;border-radius:12px;box-shadow:0 1px 8px #0002;width:300px}input,button{box-sizing:border-box;width:100%;padding:12px;margin-top:10px}button{background:#168b49;color:#fff;border:0;border-radius:7px}</style></head><body><form class="box" method="post" action="/monitor/login"><h2>Perfect Printings Monitor</h2><p>Monitor password daaliye.</p><input name="password" type="password" placeholder="Password" required autofocus><button type="submit">Open monitor</button></form></body></html>`;
+}
+
 function authorizeMonitor(req, res) {
   const password = process.env.MONITOR_PASSWORD;
-  const token = req.headers.authorization?.replace(/^Basic\s+/i, "") || "";
-  const supplied = token ? Buffer.from(token, "base64").toString().split(":").slice(1).join(":") : "";
-  if (!password || supplied !== password) {
-    res.writeHead(401, { "WWW-Authenticate": 'Basic realm="Perfect Printings Monitor"', "Content-Type": "text/plain" });
-    res.end("Private monitor login required");
+  const session = req.headers.cookie?.match(/monitor_session=([^;]+)/)?.[1];
+  if (!password || !session || !monitorSessions.has(session)) {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(monitorLoginPage());
     return false;
   }
   return true;
@@ -325,6 +330,22 @@ function queueCustomerReply(to, text) {
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === "GET" && url.pathname === "/") return send(res, 200, "Perfect Printings WhatsApp agent is running.");
+  if (req.method === "POST" && url.pathname === "/monitor/login") {
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      const supplied = new URLSearchParams(body).get("password");
+      if (process.env.MONITOR_PASSWORD && supplied === process.env.MONITOR_PASSWORD) {
+        const session = randomUUID();
+        monitorSessions.add(session);
+        res.writeHead(302, { Location: "/monitor", "Set-Cookie": `monitor_session=${session}; HttpOnly; SameSite=Strict; Path=/` });
+        return res.end();
+      }
+      res.writeHead(302, { Location: "/monitor" });
+      res.end();
+    });
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/monitor") {
     if (!authorizeMonitor(req, res)) return;
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
