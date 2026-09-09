@@ -9,6 +9,7 @@ const PUBLIC_BASE_URL = "https://perfect-printings-whatsapp-agent.onrender.com";
 const ADMIN_PHONE_NUMBER = "918966066612";
 const AI_MODEL = process.env.OPENAI_MODEL || "gpt-5.6-terra";
 const conversations = new Map();
+const customerStates = new Map();
 const sentAssets = new Map();
 const customerQueues = new Map();
 const orderRecords = new Map();
@@ -58,6 +59,34 @@ function buildWorkingMemory(history) {
   const quotedLines = history.filter(item => /(?:₹|rs\.?\s*\d|total\s*[:=]?\s*\d)/i.test(item)).slice(-6);
   if (quotedLines.length) facts.push(`Recent quoted-price context (treat as important): ${quotedLines.join(" | ")}`);
   return facts.length ? facts.join("\n") : "No important facts captured yet; use the conversation transcript.";
+}
+
+function updateCustomerState(phone, text) {
+  const state = customerStates.get(phone) || {};
+  const lower = text.toLowerCase();
+  if (/visiting ?card|business ?card/.test(lower)) state.product = "visiting cards";
+  if (/sticker|gumming|vinyl|transparent/.test(lower)) state.product = "stickers";
+  if (/paper gumming|paper gum/.test(lower)) state.material = "Paper Gumming";
+  if (/vinyl|transparent/.test(lower)) state.material = "Vinyl/Transparent";
+  const size = text.match(/\b\d+(?:\.\d+)?\s*(?:x|×)\s*\d+(?:\.\d+)?\s*(?:inch|in|cm)?\b/i);
+  if (size) state.size = size[0];
+  const quantity = text.match(/\b\d+\s*(?:sheets?|cards?|pcs?|pieces?)\b/i);
+  if (quantity) state.quantity = quantity[0];
+  const gsm = text.match(/\b\d{2,3}\s*gsm\b/i);
+  if (gsm) state.gsm = gsm[0];
+  if (/single[- ]?side|one side/.test(lower)) state.sides = "single side";
+  if (/double[- ]?side|both side/.test(lower)) state.sides = "double side";
+  if (/without lamination|bina lamination|no lamination/.test(lower)) state.lamination = "without lamination";
+  if (/with lamination|lamination chahiye/.test(lower)) state.lamination = "with lamination";
+  if (/\[customer uploaded an (image|pdf\/document|video)/i.test(text) || /design (hai|bhej|send|ready)/.test(lower)) state.design = "received/confirmed";
+  if (/confirm|final|book|kar do|kr do/.test(lower)) state.customerIntent = "customer wants to confirm";
+  customerStates.set(phone, state);
+  return state;
+}
+
+function formatCustomerState(state) {
+  const details = Object.entries(state).map(([key, value]) => `${key}: ${value}`);
+  return details.length ? `SAVED CUSTOMER RECORD: ${details.join("; ")}. These details are already known; never ask them again.` : "No saved customer record yet.";
 }
 
 async function ensureWhatsAppSubscription() {
@@ -161,6 +190,7 @@ async function sendAssetOnce(to, assetKey, sendAsset) {
 async function replyToCustomer(to, text) {
   const history = conversations.get(to) || [];
   history.push(`Customer: ${text}`);
+  const customerState = updateCustomerState(to, text);
   const isFirstMessage = !history.some(item => item.startsWith("Assistant:"));
   const lowerText = text.toLowerCase();
   const isSticker = /\bsticker(s)?\b|stikers?|gumming|vinyl|transparent/i.test(text);
@@ -208,7 +238,7 @@ async function replyToCustomer(to, text) {
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
-    const workingMemory = buildWorkingMemory(history);
+    const workingMemory = `${formatCustomerState(customerState)}\n${buildWorkingMemory(history)}`;
     const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: `SYSTEM CUSTOMER MEMORY (this is important and must not be contradicted):\n${workingMemory}\n\nFULL RECENT CONVERSATION:\n${history.slice(-120).join("\n")}` }) });
     const result = await ai.json();
     if (!ai.ok) throw new Error(JSON.stringify(result));
