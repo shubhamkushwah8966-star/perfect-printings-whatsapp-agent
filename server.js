@@ -174,7 +174,8 @@ async function replyToCustomer(to, text) {
   if (asksForPaymentQr || (hasQuotedPrice && confirmsOrder)) {
     const order = ensureOrderReference(to, history);
     history.push(`System: Customer confirmed order. Order reference ${order.id}.`);
-    await sendAssetOnce(to, "payment-qr", () => sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. Payment ke baad screenshot share kar dijiye.`));
+    // A customer may ask for the QR again, so never suppress this payment image.
+    await sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. Payment ke baad screenshot share kar dijiye.`);
     sendTextMessage(ADMIN_PHONE_NUMBER, `NEW ORDER REQUEST\nOrder: ${order.id}\nCustomer WhatsApp: +${to}\nDetails:\n${order.details}\n\nCustomer has confirmed. Please verify 50% advance after payment screenshot.`).catch(console.error);
     paymentQrSent = true;
   }
