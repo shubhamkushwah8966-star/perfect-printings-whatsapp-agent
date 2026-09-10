@@ -16,7 +16,16 @@ const sentAssets = new Map();
 const customerQueues = new Map();
 const orderRecords = new Map();
 const adminAlertKeys = new Set();
+const processedMessageIds = new Set();
 const monitorSessions = new Set();
+// Each row is [single side, double side, single-side lamination, double-side lamination].
+// These are the approved standard visiting-card rates from the supplied rate list.
+const visitingCardRateTable = {
+  "300": { "100": [275, 375, 375, 475], "200": [375, 475, 475, 575], "500": [575, 775, 775, 975], "1000": [875, 1150, 1075, 1375] },
+  "350": { "100": [375, 475, 475, 575], "200": [450, 550, 550, 650], "500": [675, 825, 775, 975], "1000": [975, 1250, 1175, 1450] },
+  "400": { "100": [450, 550, 600, 700], "200": [500, 700, 650, 850], "500": [750, 950, 900, 1200], "1000": [1075, 1450, 1350, 1700] },
+  "500": { "100": [550, 650, 650, 750], "200": [675, 800, 800, 950], "500": [875, 1125, 1150, 1350], "1000": [1600, 1950, 1900, 2250] }
+};
 const stickerRates = `Paper Gumming stickers: 12x18 minimum 30 sheets at Rs25 each; 100 at Rs20; 250 at Rs14; 500 at Rs13; 1000 at Rs10; 2000 at Rs9. 13x19 minimum 30 at Rs26; 100 at Rs21; 250 at Rs16; 500 at Rs14; 1000 at Rs11; 2000 at Rs10. Vinyl/transparent: 12x18 minimum 30 at Rs35; 100 at Rs30; 500 at Rs25; 1000 at Rs22; 2000 at Rs17.50. 13x19: 30 at Rs36; 100 at Rs31; 500 at Rs26; 1000 at Rs23; 2000 at Rs18.50.`;
 const stickerSheetCalculations = `Sticker pieces per sheet, MOQ 30 sheets: 12x18 sheet: 1x1=187, 1.5x1.5=77, 1.75x1.75=54, 2x2=40, 2.5x2.5=24, 2.75x2.75=24, 3x3=15, 3.5x3.5=12, 3.75x3.75=8, 4x4=8, 4.5x4.5=6, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=2, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2. 13x19 sheet: 1x1=216, 1.5x1.5=96, 1.75x1.75=70, 2x2=54, 2.5x2.5=28, 2.75x2.75=24, 3x3=24, 3.5x3.5=15, 3.75x3.75=12, 4x4=12, 4.5x4.5=8, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=6, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2.`;
 const workflowRules = `Accuracy rules: answer only what the customer asks, then ask only the next missing detail. Write like a polite human on WhatsApp: short, warm, simple and natural. Prefer phrases such as "Ji bilkul", "Ek minute", "Main confirm karke batata hoon", or "Aap quantity bata dijiye" where they fit. Never sound like a form, never use robotic wording, and never repeat a greeting in the same conversation. Never repeat an answered question, use a long checklist, repeatedly greet, argue, or invent information. Keep every product isolated: Paper Gumming sticker data is only for Paper Gumming, Vinyl/Transparent data is only for Vinyl/Transparent, visiting-card data is only for visiting cards, and corporate-gift data is only for corporate gifts. Never mix product rates, sizes, GSM, MOQ, sheet calculation, printing rules or finishing. Use only approved product data supplied in the prompt or relevant rate card. ${stickerSheetCalculations} If a custom size, special requirement, unusual specification, unclear product, missing rate, missing GSM, missing MOQ, unknown turnaround, payment verification, complaint, or human request needs confirmation, do not guess. Say naturally: "2 minute dijiye, size/details confirm karke batata hoon." Then collect only the useful details: customer name if known, product, material, exact size, quantity, GSM where relevant, single/double side where relevant, design/file, special requirement and delivery pincode/address. For visiting cards: standard size is 90x55 mm; MOQ is 100 cards; printing is full colour. Do not ask colour/B&W. Ask only any missing quantity, single/double side, approved GSM, and design/content. If a customer has no ready design, say design is available and, only if asked, it is approximately Rs400-Rs600 per hour depending on the requirement; never add it to printing charges without confirmation. Do not promise a poor-quality file will print perfectly; request a clearer file where needed. For an existing customer's order-status, printing-status, dispatch or delivery question, never greet again and never guess a status. Reply briefly that status is being confirmed, such as "Ji, aapke order ka status confirm karke batata hoon." Admin-confirmed information is final. Never show internal/admin process to the customer. A general enquiry is not an order: verify applicable product, size, material/GSM, quantity, sides, rate, total, design/file and customer/delivery details before moving it ahead. When the system sends a product catalogue, say only that the catalogue is sent and ask which model/item and quantity the customer needs; do not invent a catalogue rate.`;
@@ -107,16 +116,28 @@ function updateCustomerState(phone, text) {
   if (size) state.size = size[0];
   const quantity = text.match(/\b\d+\s*(?:sheets?|cards?|pcs?|pieces?)\b/i);
   if (quantity) state.quantity = quantity[0];
+  if (state.product === "visiting cards" && /^(100|200|500|1000)$/i.test(text.trim())) state.quantity = `${text.trim()} cards`;
   const gsm = text.match(/\b\d{2,3}\s*gsm\b/i);
   if (gsm) state.gsm = gsm[0];
-  if (/single[- ]?side|one side/.test(lower)) state.sides = "single side";
-  if (/double[- ]?side|both side/.test(lower)) state.sides = "double side";
+  if (state.product === "visiting cards" && /^(300|350|400|500)$/i.test(text.trim())) state.gsm = `${text.trim()} GSM`;
+  if (/single[- ]?side|one side/.test(lower) || (state.product === "visiting cards" && /^(single|s\/s)$/i.test(lower.trim()))) state.sides = "single side";
+  if (/double[- ]?side|both side/.test(lower) || (state.product === "visiting cards" && /^(double|d\/s)$/i.test(lower.trim()))) state.sides = "double side";
   if (/without lamination|bina lamination|no lamination/.test(lower)) state.lamination = "without lamination";
   if (/with lamination|lamination chahiye/.test(lower)) state.lamination = "with lamination";
   if (/\[customer uploaded an (image|pdf\/document|video)/i.test(text) || /design (hai|bhej|send|ready)/.test(lower)) state.design = "received/confirmed";
   if (/confirm|final|book|kar do|kr do/.test(lower)) state.customerIntent = "customer wants to confirm";
   customerStates.set(phone, state);
   return state;
+}
+
+function standardVisitingCardQuote(state) {
+  if (state.product !== "visiting cards" || !state.quantity || !state.gsm || !state.sides || !state.lamination) return null;
+  const quantity = state.quantity.match(/\d+/)?.[0];
+  const gsm = state.gsm.match(/\d+/)?.[0];
+  const row = visitingCardRateTable[gsm]?.[quantity];
+  if (!row) return null;
+  const index = state.lamination === "without lamination" ? (state.sides === "single side" ? 0 : 1) : (state.sides === "single side" ? 2 : 3);
+  return { amount: row[index], quantity, gsm, sides: state.sides, lamination: state.lamination };
 }
 
 function formatCustomerState(state) {
@@ -364,6 +385,11 @@ async function replyToCustomer(to, text, mediaId) {
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
+    const visitingQuote = isVisitingCardConversation && isRateRequest ? standardVisitingCardQuote(customerState) : null;
+    if (visitingQuote) {
+      reply = `Ji bilkul 😊 ${visitingQuote.quantity} visiting cards, ${visitingQuote.gsm}, ${visitingQuote.sides}, ${visitingQuote.lamination} ka total ₹${visitingQuote.amount} hoga. Design ready hai?`;
+      history.push(`System: Exact visiting-card quote confirmed: ₹${visitingQuote.amount}.`);
+    } else {
     const workingMemory = `${formatCustomerState(customerState)}\n${buildWorkingMemory(history)}`;
     const ai = await fetch("https://api.openai.com/v1/responses", { method: "POST", headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ model: AI_MODEL, reasoning: { effort: "medium" }, instructions, input: `SYSTEM CUSTOMER MEMORY (this is important and must not be contradicted):\n${workingMemory}\n\nFULL RECENT CONVERSATION:\n${history.slice(-120).join("\n")}` }) });
     const result = await ai.json();
@@ -379,6 +405,7 @@ async function replyToCustomer(to, text, mediaId) {
         alertAdmin(`CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nCustomer requirement:\n${details}\n\nRate agent ke paas available nahi hai. Please customer se baat kar lijiye aur exact rate confirm kar dijiye.`).catch(console.error);
       }
       reply = "Ji, is requirement ka exact rate Shubham ji se confirm kar raha hoon. 2 minute dijiye, woh aapse baat kar lenge 😊";
+    }
     }
   }
   history.push(`Assistant: ${reply}`);
@@ -444,6 +471,12 @@ http.createServer((req, res) => {
         return;
       }
       const message = value.messages?.[0];
+      // Meta can retry a webhook delivery. Never answer the same WhatsApp message twice.
+      if (message?.id) {
+        if (processedMessageIds.has(message.id)) return;
+        processedMessageIds.add(message.id);
+        if (processedMessageIds.size > 5000) processedMessageIds.delete(processedMessageIds.values().next().value);
+      }
       if (message?.from === ADMIN_PHONE_NUMBER) {
         handleAdminOrderUpdate(message).catch(console.error);
         return;
