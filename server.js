@@ -156,7 +156,7 @@ function buildWorkingMemory(history) {
   const transcript = history.join("\n");
   const lower = transcript.toLowerCase();
   const facts = [];
-  if (/visiting ?card|business ?card/.test(lower)) facts.push("Product discussed: visiting cards.");
+  if (/visit(?:ing)?\s*(?:card|car)\b|business\s*card/.test(lower)) facts.push("Product discussed: visiting cards.");
   if (/sticker|gumming|vinyl|transparent/.test(lower)) facts.push("Product discussed: stickers.");
   if (/paper gumming|paper gum/.test(lower)) facts.push("Sticker material confirmed/discussed: Paper Gumming.");
   if (/vinyl|transparent/.test(lower)) facts.push("Sticker material confirmed/discussed: Vinyl/Transparent.");
@@ -172,7 +172,9 @@ function buildWorkingMemory(history) {
 function updateCustomerState(phone, text) {
   const state = customerStates.get(phone) || {};
   const lower = text.toLowerCase();
-  if (/visiting ?card|business ?card|c[iv]siting ?card|visiting ?crad/.test(lower)) state.product = "visiting cards";
+  // Customers often write "visiting car", "cisting card" or abbreviate the name.
+  // Treat those as visiting cards so the fixed approved-rate table is used.
+  if (/visit(?:ing)?\s*(?:card|car)\b|business\s*card|c[iv]siting\s*(?:card|car)|visiting\s*crad/.test(lower)) state.product = "visiting cards";
   if (/sticker|gumming|vinyl|transparent/.test(lower)) state.product = "stickers";
   if (/paper gumming|paper gum/.test(lower)) state.material = "Paper Gumming";
   if (/vinyl|transparent/.test(lower)) state.material = "Vinyl/Transparent";
@@ -405,7 +407,7 @@ async function replyToCustomer(to, text, mediaId) {
   const historyText = history.join(" ").toLowerCase();
   const isRateRequest = /\b(price|rate|rate list|cost|kitna|bhav)\b/i.test(text);
   const isStickerConversation = isSticker || /\bsticker(s)?\b|stikers?/i.test(historyText);
-  const isVisitingCardConversation = /visiting ?card|business ?card/i.test(historyText);
+  const isVisitingCardConversation = /visit(?:ing)?\s*(?:card|car)\b|business\s*card|c[iv]siting\s*(?:card|car)|visiting\s*crad/i.test(historyText);
   // Only sticker rates are directly stored in the agent. All other products need the
   // owner's live quote instead of an invented price.
   if (isStickerConversation && isRateRequest && /paper gumming|paper gum|gumming/.test(historyText)) await sendAssetOnce(to, "paper-sticker-rate", () => sendImage(to, "paper-gumming-stickers.jpeg", "Paper Gumming sticker rate list. Current advance: 50% after final quote."));
@@ -422,7 +424,7 @@ async function replyToCustomer(to, text, mediaId) {
   if (/key ?chain/.test(lowerText)) await sendAssetOnce(to, "keychains", () => sendDocument(to, "metal-keychains-catalogue.pdf", "Metal keychains catalogue - please share selected model and quantity."));
   if (/corporate.*gift|gift.*set/.test(lowerText)) await sendAssetOnce(to, "gift-sets", () => sendDocument(to, "corporate-gift-sets-catalogue.pdf", "Corporate gift sets catalogue - please share selected set and quantity."));
   if (/miscellaneous|desk ?item|clock|mobile ?stand|card ?holder/.test(lowerText)) await sendAssetOnce(to, "misc-items", () => sendDocument(to, "miscellaneous-items-catalogue.pdf", "Promotional items catalogue - please share selected item and quantity."));
-  if (/visiting ?card|business ?card/.test(lowerText) && /rate list|pdf bhej|price list/i.test(text)) await sendAssetOnce(to, "visiting-cards", () => sendDocument(to, "visiting-card-rate-list.pdf", "Visiting card rate list"));
+  if (/visit(?:ing)?\s*(?:card|car)\b|business\s*card|c[iv]siting\s*(?:card|car)|visiting\s*crad/.test(lowerText) && /rate list|pdf bhej|price list/i.test(text)) await sendAssetOnce(to, "visiting-cards", () => sendDocument(to, "visiting-card-rate-list.pdf", "Visiting card rate list"));
   const hasQuotedPrice = /rs\.?\s*\d|₹\s*\d|total/i.test(historyText);
   const confirmsOrder = /\b(confirm|confirmed|done|final|book|kar do|kr do|ok)\b/i.test(lowerText);
   const asksForPaymentQr = /\b(qr|upi|payment)\b.*\b(send|bhej|bhjo|share|do)\b|\b(send|bhej|bhjo|share|do)\b.*\b(qr|upi|payment)\b/i.test(lowerText);
