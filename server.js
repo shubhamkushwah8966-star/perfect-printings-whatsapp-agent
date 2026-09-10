@@ -15,6 +15,7 @@ const customerStates = new Map();
 const sentAssets = new Map();
 const customerQueues = new Map();
 const orderRecords = new Map();
+const adminAlertKeys = new Set();
 const monitorSessions = new Set();
 const stickerRates = `Paper Gumming stickers: 12x18 minimum 30 sheets at Rs25 each; 100 at Rs20; 250 at Rs14; 500 at Rs13; 1000 at Rs10; 2000 at Rs9. 13x19 minimum 30 at Rs26; 100 at Rs21; 250 at Rs16; 500 at Rs14; 1000 at Rs11; 2000 at Rs10. Vinyl/transparent: 12x18 minimum 30 at Rs35; 100 at Rs30; 500 at Rs25; 1000 at Rs22; 2000 at Rs17.50. 13x19: 30 at Rs36; 100 at Rs31; 500 at Rs26; 1000 at Rs23; 2000 at Rs18.50.`;
 const stickerSheetCalculations = `Sticker pieces per sheet, MOQ 30 sheets: 12x18 sheet: 1x1=187, 1.5x1.5=77, 1.75x1.75=54, 2x2=40, 2.5x2.5=24, 2.75x2.75=24, 3x3=15, 3.5x3.5=12, 3.75x3.75=8, 4x4=8, 4.5x4.5=6, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=2, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2. 13x19 sheet: 1x1=216, 1.5x1.5=96, 1.75x1.75=70, 2x2=54, 2.5x2.5=28, 2.75x2.75=24, 3x3=24, 3.5x3.5=15, 3.75x3.75=12, 4x4=12, 4.5x4.5=8, 4.75x4.75=6, 5x5=6, 5.5x5.5=6, 5.75x5.75=6, 6x6=6, 6.5x6.5=2, 6.75x6.75=2, 7x7=2, 7.5x7.5=2, 7.75x7.75=2, 8x8=2.`;
@@ -173,6 +174,15 @@ async function sendTextMessage(to, body) {
 
 async function alertAdmin(body) {
   try {
+    // Send the useful alert first: customer number, order and requirement must be visible
+    // to the owner. This works whenever the admin's WhatsApp conversation is active.
+    await sendTextMessage(ADMIN_PHONE_NUMBER, body);
+    console.log("Admin detailed text alert sent");
+    return;
+  } catch (textError) {
+    console.error("Admin detailed text alert failed; trying approved template:", textError);
+  }
+  try {
     const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
       method: "POST",
       headers: { Authorization: `Bearer ${META_ACCESS_TOKEN}`, "Content-Type": "application/json" },
@@ -279,7 +289,6 @@ async function requestAdminAdvanceVerification(to, order, mediaId) {
   order.paymentScreenshotReceivedAt = new Date().toISOString();
   const note = `PAYMENT VERIFICATION NEEDED\nOrder: ${order.id}\nCustomer: +${to}\nCustomer has shared 50% advance payment screenshot. Please reply exactly:\n${order.id} PAYMENT RECEIVED\nOnly confirm after checking your payment account.\n\nOrder details:\n${order.details || "Details available in customer chat"}`;
   await alertAdmin(note);
-  await sendTextMessage(ADMIN_PHONE_NUMBER, note).catch(error => console.error("Admin payment-check detail failed:", error));
   if (mediaId) await sendImageById(ADMIN_PHONE_NUMBER, mediaId, `Payment screenshot received for ${order.id}. Verify payment, then reply: ${order.id} PAYMENT RECEIVED.`).catch(error => console.error("Admin payment screenshot forward failed:", error));
   console.log(`Advance payment verification requested for ${order.id}`);
 }
@@ -362,7 +371,13 @@ async function replyToCustomer(to, text, mediaId) {
     reply = extractResponseText(result) || "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
     if (reply.includes("[[ASK_ADMIN_RATE]]")) {
       const details = history.filter(item => item.startsWith("Customer:")).slice(-10).join("\n");
-      alertAdmin(`CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nCustomer requirement:\n${details}\n\nRate agent ke paas available nahi hai. Please customer se baat kar lijiye aur exact rate confirm kar dijiye.`);
+      // The same unknown-rate enquiry must create one owner alert, not a new alert on
+      // every customer message. New requirements generate a different key.
+      const alertKey = `${to}:${details}`;
+      if (!adminAlertKeys.has(alertKey)) {
+        adminAlertKeys.add(alertKey);
+        alertAdmin(`CUSTOMER RATE HELP NEEDED\nCustomer WhatsApp: +${to}\nCustomer requirement:\n${details}\n\nRate agent ke paas available nahi hai. Please customer se baat kar lijiye aur exact rate confirm kar dijiye.`).catch(console.error);
+      }
       reply = "Ji, is requirement ka exact rate Shubham ji se confirm kar raha hoon. 2 minute dijiye, woh aapse baat kar lenge 😊";
     }
   }
