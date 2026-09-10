@@ -147,6 +147,20 @@ async function sendImage(to, fileName, caption) {
   if (!response.ok) throw new Error(await response.text());
 }
 
+async function sendImageById(to, mediaId, caption) {
+  const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${META_ACCESS_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "image",
+      image: { id: mediaId, caption }
+    })
+  });
+  if (!response.ok) throw new Error(await response.text());
+}
+
 async function sendTextMessage(to, body) {
   const response = await fetch(`https://graph.facebook.com/${GRAPH_VERSION}/${META_PHONE_NUMBER_ID}/messages`, {
     method: "POST",
@@ -214,6 +228,7 @@ function moneyFromAdminMessage(text, label) {
 
 async function handleAdminOrderUpdate(message) {
   const text = message.text?.body || message.video?.caption || "";
+  if (await handleAdminAdvanceConfirmation(text)) return true;
   const reference = text.match(/PP-\d{8}-\d{3}/i)?.[0]?.toUpperCase();
   if (!reference || !/job\s*done|complete|ready/i.test(text)) return false;
   const found = findOrderByReference(reference);
@@ -238,6 +253,37 @@ async function handleAdminOrderUpdate(message) {
   return true;
 }
 
+async function handleAdminAdvanceConfirmation(text) {
+  const lower = text.toLowerCase();
+  const looksConfirmed = /(?:payment|advance).*(?:received|rec[eie]ved|aa\s*gaya|mil\s*gaya|confirmed)|(?:haa|han|yes|ha)\b.*(?:payment|advance).*(?:aa\s*gaya|mil\s*gaya|received|confirm)/i.test(lower);
+  if (!looksConfirmed) return false;
+  const reference = text.match(/PP-\d{8}-\d{3}/i)?.[0]?.toUpperCase();
+  const candidates = [...orderRecords.entries()].filter(([, order]) => order.status === "awaiting-admin-advance-confirmation");
+  const found = reference ? findOrderByReference(reference) : candidates.length === 1 ? candidates[0] : null;
+  if (!found) {
+    await sendTextMessage(ADMIN_PHONE_NUMBER, "Payment confirmation ke liye order number bhi likh dijiye, jaise: PP-YYYYMMDD-001 PAYMENT RECEIVED.");
+    return true;
+  }
+  const [customerPhone, order] = found;
+  if (order.status !== "awaiting-admin-advance-confirmation") return false;
+  order.status = "advance-verified-processing";
+  order.advanceVerifiedAt = new Date().toISOString();
+  await sendTextMessage(customerPhone, `Ji, Order ${order.id} ka advance payment receive ho gaya hai 😊 Aapka order ab process mein laga diya hai.`);
+  await sendTextMessage(ADMIN_PHONE_NUMBER, `PAYMENT VERIFIED — PLEASE PROCESS\nOrder: ${order.id}\nCustomer: +${customerPhone}\nAdvance: 50% received\nOrder details:\n${order.details || "Details available in customer chat"}`);
+  console.log(`Advance payment verified for ${order.id}`);
+  return true;
+}
+
+async function requestAdminAdvanceVerification(to, order, mediaId) {
+  order.status = "awaiting-admin-advance-confirmation";
+  order.paymentScreenshotReceivedAt = new Date().toISOString();
+  const note = `PAYMENT VERIFICATION NEEDED\nOrder: ${order.id}\nCustomer: +${to}\nCustomer has shared 50% advance payment screenshot. Please reply exactly:\n${order.id} PAYMENT RECEIVED\nOnly confirm after checking your payment account.\n\nOrder details:\n${order.details || "Details available in customer chat"}`;
+  await alertAdmin(note);
+  await sendTextMessage(ADMIN_PHONE_NUMBER, note).catch(error => console.error("Admin payment-check detail failed:", error));
+  if (mediaId) await sendImageById(ADMIN_PHONE_NUMBER, mediaId, `Payment screenshot received for ${order.id}. Verify payment, then reply: ${order.id} PAYMENT RECEIVED.`).catch(error => console.error("Admin payment screenshot forward failed:", error));
+  console.log(`Advance payment verification requested for ${order.id}`);
+}
+
 async function sendAssetOnce(to, assetKey, sendAsset) {
   const customerAssets = sentAssets.get(to) || new Set();
   if (customerAssets.has(assetKey)) return;
@@ -246,10 +292,13 @@ async function sendAssetOnce(to, assetKey, sendAsset) {
   sentAssets.set(to, customerAssets);
 }
 
-async function replyToCustomer(to, text) {
+async function replyToCustomer(to, text, mediaId) {
   const history = conversations.get(to) || [];
   history.push(`Customer: ${text}`);
   const customerState = updateCustomerState(to, text);
+  const existingOrder = orderRecords.get(to);
+  const isUploadedImage = /^\[Customer uploaded an image/i.test(text);
+  const isPaymentScreenshot = isUploadedImage && existingOrder?.status === "awaiting-advance-screenshot";
   const isFirstMessage = !history.some(item => item.startsWith("Assistant:"));
   const lowerText = text.toLowerCase();
   const isSticker = /\bsticker(s)?\b|stikers?|gumming|vinyl|transparent/i.test(text);
@@ -282,6 +331,8 @@ async function replyToCustomer(to, text) {
   let paymentQrSent = false;
   if (asksForPaymentQr || (hasQuotedPrice && confirmsOrder)) {
     const order = ensureOrderReference(to, history);
+    order.details = history.filter(item => item.startsWith("Customer:")).slice(-30).join("\n");
+    order.status = "awaiting-advance-screenshot";
     history.push(`System: Customer confirmed order. Order reference ${order.id}.`);
     // A customer may ask for the QR again, so never suppress this payment image.
     await sendImage(to, "payment-qr.jpeg", `Order ${order.id} - 50% advance payment QR. UPI: ${PAYMENT_UPI_ID}. Payment ke baad screenshot share kar dijiye.`);
@@ -294,7 +345,11 @@ async function replyToCustomer(to, text) {
   }
   const isGreetingOnly = /^(hi+|hello+|hey+|namaste|namaskar)\s*[!.?😊🙏]*$/i.test(text.trim());
   let reply;
-  if (paymentQrSent) {
+  if (isPaymentScreenshot) {
+    const order = orderRecords.get(to);
+    await requestAdminAdvanceVerification(to, order, mediaId);
+    reply = `Ji, payment screenshot mil gaya 😊 Main payment verify karwa raha hoon. Confirmation aate hi aapko order processing update bhej dunga.`;
+  } else if (paymentQrSent) {
     const order = ensureOrderReference(to, history);
     reply = `Ji bilkul 😊 QR bhej diya hai. UPI ID: ${PAYMENT_UPI_ID}. Order ${order.id} ke 50% advance ka payment karke screenshot isi chat mein share kar dijiye.`;
   } else if (isFirstMessage && isGreetingOnly) {
@@ -317,9 +372,9 @@ async function replyToCustomer(to, text) {
   await sendTextMessage(to, reply);
 }
 
-function queueCustomerReply(to, text) {
+function queueCustomerReply(to, text, mediaId) {
   const previous = customerQueues.get(to) || Promise.resolve();
-  const next = previous.catch(() => {}).then(() => replyToCustomer(to, text));
+  const next = previous.catch(() => {}).then(() => replyToCustomer(to, text, mediaId));
   customerQueues.set(to, next);
   next.finally(() => {
     if (customerQueues.get(to) === next) customerQueues.delete(to);
@@ -379,7 +434,7 @@ http.createServer((req, res) => {
         return;
       }
       const incomingText = message?.text?.body || (message?.image ? `[Customer uploaded an image${message.image.caption ? `: ${message.image.caption}` : ""}]` : message?.document ? `[Customer uploaded a PDF/document${message.document.caption ? `: ${message.document.caption}` : ""}]` : message?.video ? `[Customer uploaded a video${message.video.caption ? `: ${message.video.caption}` : ""}]` : "");
-      if (incomingText) queueCustomerReply(message.from, incomingText).catch(console.error);
+      if (incomingText) queueCustomerReply(message.from, incomingText, message?.image?.id).catch(console.error);
     } catch (error) { console.error(error); }
   });
 }).listen(process.env.PORT || 3000, () => {
