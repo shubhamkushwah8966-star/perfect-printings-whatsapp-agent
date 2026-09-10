@@ -109,7 +109,7 @@ function buildWorkingMemory(history) {
 function updateCustomerState(phone, text) {
   const state = customerStates.get(phone) || {};
   const lower = text.toLowerCase();
-  if (/visiting ?card|business ?card/.test(lower)) state.product = "visiting cards";
+  if (/visiting ?card|business ?card|c[iv]siting ?card|visiting ?crad/.test(lower)) state.product = "visiting cards";
   if (/sticker|gumming|vinyl|transparent/.test(lower)) state.product = "stickers";
   if (/paper gumming|paper gum/.test(lower)) state.material = "Paper Gumming";
   if (/vinyl|transparent/.test(lower)) state.material = "Vinyl/Transparent";
@@ -121,10 +121,11 @@ function updateCustomerState(phone, text) {
   const gsm = text.match(/\b\d{2,3}\s*gsm\b/i);
   if (gsm) state.gsm = gsm[0];
   if (state.product === "visiting cards" && /^(300|350|400|500)$/i.test(text.trim())) state.gsm = `${text.trim()} GSM`;
-  if (/single[- ]?side|one side/.test(lower) || (state.product === "visiting cards" && /^(single|s\/s)$/i.test(lower.trim()))) state.sides = "single side";
+  if (/single[- ]?side|one side/.test(lower) || (state.product === "visiting cards" && /^(single|singal|sinagal|s\/s)$/i.test(lower.trim()))) state.sides = "single side";
   if (/double[- ]?side|both side/.test(lower) || (state.product === "visiting cards" && /^(double|d\/s)$/i.test(lower.trim()))) state.sides = "double side";
   if (/without lamination|bina lamination|no lamination/.test(lower)) state.lamination = "without lamination";
   if (/with lamination|lamination chahiye/.test(lower)) state.lamination = "with lamination";
+  if (/\bmat+t?e?|glossy|velvet|uv\b/.test(lower)) state.lamination = "with lamination";
   if (/\[customer uploaded an (image|pdf\/document|video)/i.test(text) || /design (hai|bhej|send|ready)/.test(lower)) state.design = "received/confirmed";
   if (/confirm|final|book|kar do|kr do/.test(lower)) state.customerIntent = "customer wants to confirm";
   customerStates.set(phone, state);
@@ -386,7 +387,9 @@ async function replyToCustomer(to, text, mediaId) {
   } else if (isFirstMessage && isGreetingOnly) {
     reply = "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?";
   } else {
-    const visitingQuote = isVisitingCardConversation && isRateRequest ? standardVisitingCardQuote(customerState) : null;
+    // As soon as all standard visiting-card details are present, give the approved
+    // rate. Do not wait for the customer to repeat "rate" or escalate to admin.
+    const visitingQuote = isVisitingCardConversation ? standardVisitingCardQuote(customerState) : null;
     if (visitingQuote) {
       reply = `Ji bilkul 😊 ${visitingQuote.quantity} visiting cards, ${visitingQuote.gsm}, ${visitingQuote.sides}, ${visitingQuote.lamination} ka total ₹${visitingQuote.amount} hoga. Design ready hai?`;
       history.push(`System: Exact visiting-card quote confirmed: ₹${visitingQuote.amount}.`);
