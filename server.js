@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-const { OPENAI_API_KEY, META_VERIFY_TOKEN, META_ACCESS_TOKEN, META_PHONE_NUMBER_ID } = process.env;
+const { OPENAI_API_KEY, META_VERIFY_TOKEN, META_ACCESS_TOKEN, META_PHONE_NUMBER_ID, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, MEMORY_AUTH_TOKEN } = process.env;
 const META_WABA_ID = "767216649494332";
 const GRAPH_VERSION = "v25.0";
 const PUBLIC_BASE_URL = "https://perfect-printings-whatsapp-agent.onrender.com";
@@ -18,6 +18,7 @@ const orderRecords = new Map();
 const adminAlertKeys = new Set();
 const processedMessageIds = new Set();
 const monitorSessions = new Set();
+const memoryEnabled = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && MEMORY_AUTH_TOKEN);
 // Each row is [single side, double side, single-side lamination, double-side lamination].
 // These are the approved standard visiting-card rates from the supplied rate list.
 const visitingCardRateTable = {
@@ -33,6 +34,54 @@ const workflowRules = `Accuracy rules: answer only what the customer asks, then 
 const instructions = `You are the respectful WhatsApp sales assistant for Perfect Printings. Reply in the same language as the customer: Hindi/Hinglish for Hindi/Hinglish and English for English. Have a natural, helpful conversation; never say you are a bot. Before every reply, silently review the whole conversation and identify: the product, all details already confirmed, any uploaded design/file, quoted amount, order reference and current order stage. Never lose, contradict, or ask again for a fact already present. Choose the single best next business action before writing. Prioritise the order workflow over casual chat, but never show this internal reasoning to the customer. CRITICAL: speak like a human on WhatsApp, with short replies and only ONE question at a time. If this is a first message containing only a greeting such as hi, hello, hii, namaste or hey, reply exactly: "Namaste ji 😊 Perfect Printings mein aapka swagat hai. Ji sir/madam, aapko kis printing ki need hai?" Do not mention any product, rate, material, quantity, catalogue or any other detail in that greeting. Never send a long checklist, rate-table text, or many questions in one message. Sticker flow: first ask only "Ji, aapko kaunsa sticker chahiye - Paper Gumming, Vinyl ya Transparent?" Do not send both rate cards. After material, ask only the missing size and quantity. Give the exact relevant rate when price is asked or all relevant details are available. Send only that material's rate card when the customer asks for rate/price/rate list. Visiting-card flow: first collect only missing quantity, single/double side, GSM, and lamination requirement. Do not send a price PDF or ask delivery pincode before these details. Once applicable details are known, give the exact rate; only send the rate list if customer asks for it. If a supplied catalogue is picture/model based, send it once and ask only for the selected model/code and quantity; do not ask the admin for a rate that is in an approved rate list. Once an exact total is stated and the customer confirms the order, directly request 50% advance, send the QR, and ask for payment screenshot. When the conversation includes a System order reference, mention that same order reference briefly in the payment message. Courier is handled manually by the admin after the job is ready. Never invent, calculate, or request courier charges yourself. Wait for the admin's order-complete update, then use only the admin-supplied remaining balance and courier charge. Do not say "2 minutes" for approved standard rates. If a customer uploads an image/PDF and says it is their design, remember it as design received; never ask product/design again if already known. Tell quality, production time, delivery time, GST or design information only when the customer asks. Perfect Printings offers labels, stickers, visiting cards, letterheads, garment tags, digital printing, diaries, corporate gift items, paper bags, jute bags, T-shirts, pamphlets, menu cards, brochures and other printing work. Ask only relevant details: product, quantity, size, material/paper, print sides/colours, finishing, ready design/matter, deadline and delivery pincode/address or pickup preference. For samples or previous work share Instagram @perfectprintings.in. When useful, suggest ordering from https://perfectprintings.in/. For location share https://maps.app.goo.gl/YLNYoGmEhyyTEEM29. Shop hours: 10 AM to 9 PM; Sunday, Diwali, Holi and Rakhi are holidays. Delivery is all over India; production usually takes 3-5 working days and delivery charges vary by location. No discount is allowed. Design-ready files accepted: PDF, JPEG, PNG, and CDR version 16. GST bill is available only on request. No refund after order placement; replacement requests need admin review. ${stickerRates} ${approvedGeneralRates} RATE ESCALATION: If the customer asks any rate that is not exactly stated in the approved data above, or asks for any unfamiliar/out-of-syllabus item, NEVER guess. Begin your draft with the exact marker [[ASK_ADMIN_RATE]]. This marker is only for the software; do not write anything else before it. Take 50% advance only after the customer agrees to an exact quote. Never claim payment or an order is confirmed; the team verifies it. ${workflowRules} Keep replies concise and warm for WhatsApp.`;
 
 function send(res, status, body) { res.writeHead(status, { "Content-Type": "text/plain" }); res.end(body); }
+
+function memoryHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_PUBLISHABLE_KEY,
+    Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+    "X-Memory-Token": MEMORY_AUTH_TOKEN,
+    ...extra
+  };
+}
+
+async function restoreCustomerMemory(phone) {
+  if (!memoryEnabled || conversations.has(phone)) return;
+  try {
+    const query = new URLSearchParams({ select: "history,state,assets,order_record", phone: `eq.${phone}`, limit: "1" });
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/agent_memory?${query}`, { headers: memoryHeaders() });
+    if (!response.ok) throw new Error(await response.text());
+    const record = (await response.json())[0];
+    if (!record) return;
+    conversations.set(phone, Array.isArray(record.history) ? record.history : []);
+    customerStates.set(phone, record.state && typeof record.state === "object" ? record.state : {});
+    sentAssets.set(phone, new Set(Array.isArray(record.assets) ? record.assets : []));
+    if (record.order_record && typeof record.order_record === "object") orderRecords.set(phone, record.order_record);
+  } catch (error) {
+    console.error(`Customer memory restore failed for ${phone}:`, error.message);
+  }
+}
+
+async function persistCustomerMemory(phone) {
+  if (!memoryEnabled) return;
+  try {
+    const record = {
+      phone,
+      history: conversations.get(phone) || [],
+      state: customerStates.get(phone) || {},
+      assets: [...(sentAssets.get(phone) || new Set())],
+      order_record: orderRecords.get(phone) || null,
+      updated_at: new Date().toISOString()
+    };
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/agent_memory?on_conflict=phone`, {
+      method: "POST",
+      headers: memoryHeaders({ "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=minimal" }),
+      body: JSON.stringify(record)
+    });
+    if (!response.ok) throw new Error(await response.text());
+  } catch (error) {
+    console.error(`Customer memory save failed for ${phone}:`, error.message);
+  }
+}
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>'"]/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]);
@@ -85,8 +134,22 @@ function ensureOrderReference(to, history) {
   return order;
 }
 
-function findOrderByReference(reference) {
-  return [...orderRecords.entries()].find(([, order]) => order.id === reference);
+async function findOrderByReference(reference) {
+  const inMemory = [...orderRecords.entries()].find(([, order]) => order.id === reference);
+  if (inMemory || !memoryEnabled) return inMemory;
+  try {
+    const query = new URLSearchParams({ select: "phone,order_record", "order_record->>id": `eq.${reference}`, limit: "1" });
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/agent_memory?${query}`, { headers: memoryHeaders() });
+    if (!response.ok) throw new Error(await response.text());
+    const record = (await response.json())[0];
+    if (!record?.order_record) return null;
+    orderRecords.set(record.phone, record.order_record);
+    await restoreCustomerMemory(record.phone);
+    return [record.phone, record.order_record];
+  } catch (error) {
+    console.error(`Order memory lookup failed for ${reference}:`, error.message);
+    return null;
+  }
 }
 
 function buildWorkingMemory(history) {
@@ -264,7 +327,7 @@ async function handleAdminOrderUpdate(message) {
   if (await handleAdminAdvanceConfirmation(text)) return true;
   const reference = text.match(/PP-\d{8}-\d{3}/i)?.[0]?.toUpperCase();
   if (!reference || !/job\s*done|complete|ready/i.test(text)) return false;
-  const found = findOrderByReference(reference);
+  const found = await findOrderByReference(reference);
   if (!found) {
     await sendTextMessage(ADMIN_PHONE_NUMBER, `Order ${reference} is not available in the agent's current records. Please resend after the customer order is created.`);
     return true;
@@ -282,6 +345,7 @@ async function handleAdminOrderUpdate(message) {
   await sendImage(customerPhone, "payment-qr.jpeg", `Order ${reference} final payment QR — ₹${payable}. UPI: ${PAYMENT_UPI_ID}. Payment ke baad screenshot share kar dijiye.`);
   order.status = "final-payment-requested";
   order.finalPayable = payable;
+  await persistCustomerMemory(customerPhone);
   await sendTextMessage(ADMIN_PHONE_NUMBER, `Final payment request sent to customer for ${reference}: Balance ₹${balance} + Courier ₹${courier} = ₹${payable}.`);
   return true;
 }
@@ -292,7 +356,7 @@ async function handleAdminAdvanceConfirmation(text) {
   if (!looksConfirmed) return false;
   const reference = text.match(/PP-\d{8}-\d{3}/i)?.[0]?.toUpperCase();
   const candidates = [...orderRecords.entries()].filter(([, order]) => order.status === "awaiting-admin-advance-confirmation");
-  const found = reference ? findOrderByReference(reference) : candidates.length === 1 ? candidates[0] : null;
+  const found = reference ? await findOrderByReference(reference) : candidates.length === 1 ? candidates[0] : null;
   if (!found) {
     await sendTextMessage(ADMIN_PHONE_NUMBER, "Payment confirmation ke liye order number bhi likh dijiye, jaise: PP-YYYYMMDD-001 PAYMENT RECEIVED.");
     return true;
@@ -301,6 +365,7 @@ async function handleAdminAdvanceConfirmation(text) {
   if (order.status !== "awaiting-admin-advance-confirmation") return false;
   order.status = "advance-verified-processing";
   order.advanceVerifiedAt = new Date().toISOString();
+  await persistCustomerMemory(customerPhone);
   await sendTextMessage(customerPhone, `Ji, Order ${order.id} ka advance payment receive ho gaya hai 😊 Aapka order ab process mein laga diya hai.`);
   await sendTextMessage(ADMIN_PHONE_NUMBER, `PAYMENT VERIFIED — PLEASE PROCESS\nOrder: ${order.id}\nCustomer: +${customerPhone}\nAdvance: 50% received\nOrder details:\n${order.details || "Details available in customer chat"}`);
   console.log(`Advance payment verified for ${order.id}`);
@@ -325,6 +390,7 @@ async function sendAssetOnce(to, assetKey, sendAsset) {
 }
 
 async function replyToCustomer(to, text, mediaId) {
+  await restoreCustomerMemory(to);
   const history = conversations.get(to) || [];
   history.push(`Customer: ${text}`);
   const customerState = updateCustomerState(to, text);
@@ -415,6 +481,7 @@ async function replyToCustomer(to, text, mediaId) {
   history.push(`Assistant: ${reply}`);
   // Keep enough history for long customer conversations instead of dropping key order facts.
   conversations.set(to, history.slice(-160));
+  await persistCustomerMemory(to);
   await sendTextMessage(to, reply);
 }
 
