@@ -19,6 +19,9 @@ const adminAlertKeys = new Set();
 const processedMessageIds = new Set();
 const monitorSessions = new Set();
 const memoryEnabled = Boolean(SUPABASE_URL && SUPABASE_PUBLISHABLE_KEY && MEMORY_AUTH_TOKEN);
+// Manual-mode switch: keep this false until the owner explicitly turns the agent on again.
+// Incoming Meta webhooks receive OK but no customer/admin message is sent.
+const AGENT_ENABLED = false;
 // Each row is [single side, double side, single-side lamination, double-side lamination].
 // These are the approved standard visiting-card rates from the supplied rate list.
 const visitingCardRateTable = {
@@ -532,6 +535,10 @@ http.createServer((req, res) => {
     return send(res, 403, "Verification failed");
   }
   if (req.method !== "POST" || url.pathname !== "/webhook") return send(res, 404, "Not found");
+  if (!AGENT_ENABLED) {
+    console.log("Webhook received while agent is OFF; no reply sent.");
+    return send(res, 200, "Agent is off");
+  }
   let data = "";
   req.on("data", chunk => { data += chunk; });
   req.on("end", () => {
@@ -559,6 +566,6 @@ http.createServer((req, res) => {
     } catch (error) { console.error(error); }
   });
 }).listen(process.env.PORT || 3000, () => {
-  console.log("Perfect Printings agent started");
-  ensureWhatsAppSubscription().catch(error => console.error("WhatsApp subscription failed:", error));
+  console.log(AGENT_ENABLED ? "Perfect Printings agent started" : "Perfect Printings agent is OFF (manual WhatsApp mode)");
+  if (AGENT_ENABLED) ensureWhatsAppSubscription().catch(error => console.error("WhatsApp subscription failed:", error));
 });
