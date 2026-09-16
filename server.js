@@ -502,7 +502,7 @@ function queueCustomerReply(to, text, mediaId) {
 
 http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  if (req.method === "GET" && url.pathname === "/") return send(res, 200, "Perfect Printings WhatsApp agent is running.");
+  if (req.method === "GET" && url.pathname === "/") return send(res, 200, AGENT_ENABLED ? "Perfect Printings WhatsApp agent is running." : "Perfect Printings WhatsApp agent is OFF. Manual WhatsApp mode is active.");
   if (req.method === "POST" && url.pathname === "/monitor/login") {
     let body = "";
     req.on("data", chunk => { body += chunk; });
